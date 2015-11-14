@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#! /usr/bin/env python2
 #
 # Copyright 2008 Desmond Cox <desmondgc AT gmail DOT com>
 #
