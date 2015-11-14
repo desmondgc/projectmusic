@@ -1,6 +1,7 @@
 #! /usr/bin/env python2
 #
 # Copyright 2008 Desmond Cox <desmondgc AT gmail DOT com>
+# Copyright 2015 Clément Moyroud <clement DOT moyroud AT gmail DOT com>
 #
 # This program is free software: you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
