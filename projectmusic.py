@@ -28,12 +28,15 @@ Options:
   -d ...,   --directory=...             Specify which directory to work in
                                         (default is the current directory)
   -f ...,   --format=...                Specify the naming format
+  -p X,     --padding=X                 Pad track number with leading zeros,
+                                        total track number length will be X chars
   -l,       --flatten                   Move all files into the same root
                                         directory
   -r,       --recursive                 Work recursively on the specified
                                         directory
   -t,       --test                      Only display the new file names; nothing
                                         will be renamed
+  -n,       --noconfirm                 Do not ask before renaming files
   -h,       --help                      Display this help
 
 Formatting:
@@ -135,8 +138,10 @@ class AudioFile:
     """
     A generic audio file
     """
-    def __init__(self, fileName):
+    def __init__(self, fileName, padding):
         self.fileName = fileName
+        self.padding = padding
+
         self.fileExt = os.path.splitext(fileName)[1].lower()
         self.filePath = os.path.split(fileName)[0] + os.path.sep
 
@@ -158,7 +163,10 @@ class AudioFile:
         self.disc = lookup("discnumber", "0")
 
         if self.track != "0":
-            self.track = self.track.split("/")[0].lstrip("0") 
+            self.track = self.track.split("/")[0].lstrip("0")
+            if self.padding > 0:
+                pad_format = "{0:0>%s}" % self.padding
+                self.track = pad_format.format(int(self.track))
         if self.disc != "0":
             self.disc = self.disc.split("/")[0].lstrip("0")
 
@@ -223,8 +231,10 @@ def main(argv):
     global directory
     directory = os.getcwd()
     format = "%(artist)s - %(album)s [%(track)s] %(title)s"
+    padding = 0
     flatten = False
     recursive = False
+    noconfirm = False
     test = False
 
     def verifyFormat(format):
@@ -254,21 +264,31 @@ def main(argv):
         """
         if os.path.isdir(directory):
             return os.path.abspath(directory)
-        
         else:
-            raise DirectoryError, "supplied directory cannot be found"    
+            raise DirectoryError, "supplied directory cannot be found"
+
+    def verifyPadding(padding):
+        """
+        Verify the supplied padding number
+        """
+        if padding.isdigit():
+                return padding
+        else:
+                raise FormatError, "padding should be an integer > 0"
 
     def usage():
         print __doc__
 
     try:
-        opts, args = getopt.getopt(argv, "d:f:hlrt", ["directory=", 
-                                                      "format=", 
-                                                      "help", 
-                                                      "flatten", 
-                                                      "recursive", 
-                                                      "test"])
-    
+        opts, args = getopt.getopt(argv, "d:f:p:hlrnt", ["directory=",
+                                                         "format=",
+                                                         "padding=",
+                                                         "help",
+                                                         "flatten",
+                                                         "recursive",
+                                                         "noconfirm",
+                                                         "test"])
+
     except getopt.error, error:
         usage()
         print "\n***Error: %s***" % error
@@ -286,7 +306,15 @@ def main(argv):
             except FormatError, error:
                 print "\n***Error: %s***" % error
                 sys.exit(2)
-        
+
+        elif opt in ("-p", "--padding"):
+            try:
+                padding = verifyPadding(arg)
+
+            except FormatError, error:
+                print "\n***Error: %s***" % error
+                sys.exit(2)
+
         elif opt in ("-d", "--directory"):
             try:
                 directory = verifyDirectory(arg)
@@ -300,50 +328,55 @@ def main(argv):
 
         elif opt in ("-r", "--recursive"):
             recursive = True
-                
+
+        elif opt in ("-n", "--noconfirm"):
+            noconfirm = True
+
         elif opt in ("-t", "--test"):
             test = True
 
-    work(directory, format, flatten, recursive, test)
+    work(directory, format, padding, flatten, recursive, test, noconfirm)
 
-def safety(message):
+def safety(message, noconfirm = False):
     print "\n***Attention: %s***" % message
-    safety = raw_input("Enter 'ok' to continue (any other response will abort): ")
-    
-    if safety.lower().strip() != "ok":
-        print "\n***Attention: aborting***"
-        sys.exit()
 
-def work(directory, format, flatten, recursive, test):
+    if not noconfirm:
+        safety = raw_input("Enter 'ok' to continue (any other response will abort): ")
+
+        if safety.lower().strip() != "ok":
+            print "\n***Attention: aborting***"
+            sys.exit()
+
+def work(directory, format, padding, flatten, recursive, test, noconfirm):
     fileList = scanDirectory(directory, [".mp3", ".ogg"], recursive)
 
     try:
         if test:
-            safety("testing mode; nothing will be renamed")
-    
+            safety("testing mode; nothing will be renamed", noconfirm)
+
             print "\n***Attention: starting***"
-    
-            for f in fileList:              
-                current = AudioFile(f)
+
+            for f in fileList:
+                current = AudioFile(f, padding)
                 print current.cleanFileName(format)
 
         else:
             count = 0
             total = len(fileList)
-            safety("all audio files in %s will be renamed" % directory)
+            safety("all audio files in %s will be renamed" % directory, noconfirm)
 
             print "\n***Attention: starting***"
             start = time.time()
 
             for f in fileList:
                 count += 1
-                current = AudioFile(f)
+                current = AudioFile(f, padding)
                 current.rename(current.cleanFileName(format), flatten)
                 message = "Renamed %d of %d" % (count, total)
                 sys.stdout.write("\r" + message)
 
             print "\n%d files renamed in %f seconds" % (len(fileList),
-                    time.time() - start)
+                                                        time.time() - start)
 
     except StandardError:
         print "\n***Error: %s***" % f
