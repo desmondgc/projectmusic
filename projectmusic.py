@@ -38,12 +38,12 @@ Options:
   
 Formatting:
   The following information is available to be used in the file name:
-  album    artist    title    track
-  
+  album    artist    composer    title    track    disc
+
   To specify a file name format, enter the desired format enclosed in quotation
-  marks. The words album, artist, title, and track will be replaced by values
-  retrieved from the audio file's metadata.
-  
+  marks. The words album, artist, composer, title, track and disc will be replaced
+  by values retrieved from the audio file's metadata.
+
   For example, --format="artist - album [track] title" will rename music files
   with the name format:
   Sample Artist - Sample Album [1] Sample Title
@@ -77,6 +77,23 @@ import getopt
 
 import mutagen.easyid3
 import mutagen.oggvorbis
+
+# Monkey patching of easyID3 to add support for "sets" (i.e. CD number)
+new_valid_keys = {
+        "album": "TALB",
+        "composer": "TCOM",
+        "genre": "TCON",
+        "date": "TDRC",
+        "lyricist": "TEXT",
+        "title": "TIT2",
+        "version": "TIT3",
+        "artist": "TPE1",
+        "tracknumber": "TRCK",
+        "discnumber": "TPOS",
+        }
+"""Valid keys for EasyID3 instances."""
+
+mutagen.easyid3.EasyID3.valid_keys = new_valid_keys
 
 ### Exceptions ###
     
@@ -134,17 +151,21 @@ class AudioFile:
                                           self.data[key][0] ) else default
 
         self.artist = lookup("artist", "No Artist")
+        self.composer = lookup("composer", "No Composer")
         self.album = lookup("album", "No Album")
         self.title = lookup("title", "No Title")
         self.track = lookup("tracknumber", "0")
+        self.disc = lookup("discnumber", "0")
 
         if self.track != "0":
             self.track = self.track.split("/")[0].lstrip("0") 
+        if self.disc != "0":
+            self.disc = self.disc.split("/")[0].lstrip("0")
 
-        # In regards to track numbers, self.data["tracknumber"] returns numbers 
-        # in several different formats: 1, 1/10, 01, or 01/10. Wanting a 
-        # consistent format, the returned string is split at the "/" and leading
-        # zeros are stripped.
+        # In regards to track & disc numbers, self.data["tracknumber"] returns
+        # numbers in several different formats: 1, 1/10, 01, or 01/10. Wanting a 
+        # consistent format, the returned string is split at the "/".
+        # To make sorting simpler, leading zeros are added to the track number
 
     def parse_mp3(self):
         return mutagen.easyid3.EasyID3(self.fileName)
@@ -180,9 +201,11 @@ class AudioFile:
         Generate a clean file name based on metadata
         """
         rawFileName = format % {"artist": self.artist,
-                                "album": self.album,
-                                "title": self.title,
-                                "track": self.track}
+                "composer": self.composer,
+                "album": self.album,
+                "title": self.title,
+                "disc": self.disc,
+                "track": self.track}
 
         rawFileName.encode("ascii", "replace")
         # encode is used to override the default encode error-handing mode;
@@ -213,14 +236,16 @@ def main(argv):
 
         if not re.search(formatPattern, format):
             raise FormatError, "supplied format does not contain any metadata keys"
-            # the supplied format must contain at least one of "artist", 
-            # "album", "title", or "track", or all files will be named 
+        # the supplied format must contain at least one of "artist", "composer", 
+            # "album", "title", "disc" or "track", or all files will be named 
             # identically
         
         format = format.replace("artist", "%(artist)s")
+        format = format.replace("composer", "%(composer)s")
         format = format.replace("album", "%(album)s")
         format = format.replace("title", "%(title)s")
         format = format.replace("track", "%(track)s")
+        format = format.replace("disc", "%(disc)s")
         return format
         
     def verifyDirectory(directory):
@@ -326,6 +351,6 @@ def work(directory, format, flatten, recursive, test):
         
 if __name__ == "__main__":
     restrictedCharPattern = re.compile('[\\\\/:\*\?"<>\|]')
-    formatPattern = re.compile('artist|album|title|track')
+    formatPattern = re.compile('artist|composer|album|title|track|disc')
 
     main(sys.argv[1:])
