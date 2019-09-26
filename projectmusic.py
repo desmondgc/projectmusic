@@ -1,6 +1,7 @@
-#! /usr/bin/env python
+#! /usr/bin/env python2
 #
 # Copyright 2008 Desmond Cox <desmondgc AT gmail DOT com>
+# Copyright 2015 Clément Moyroud <clement DOT moyroud AT gmail DOT com>
 #
 # This program is free software: you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
@@ -25,42 +26,45 @@ Renames audio files based on metadata
 Usage: projectmusic.py [options]
 
 Options:
-  -d ...,   --directory=...             Specify which directory to work in 
+  -d ...,   --directory=...             Specify which directory to work in
                                         (default is the current directory)
   -f ...,   --format=...                Specify the naming format
+  -p X,     --padding=X                 Pad track number with leading zeros,
+                                        total track number length will be X chars
   -l,       --flatten                   Move all files into the same root
                                         directory
-  -r,       --recursive                 Work recursively on the specified 
+  -r,       --recursive                 Work recursively on the specified
                                         directory
   -t,       --test                      Only display the new file names; nothing
                                         will be renamed
+  -n,       --noconfirm                 Do not ask before renaming files
   -h,       --help                      Display this help
-  
+
 Formatting:
   The following information is available to be used in the file name:
-  album    artist    title    track
-  
+  album    artist    composer    title    track    disc
+
   To specify a file name format, enter the desired format enclosed in quotation
-  marks. The words album, artist, title, and track will be replaced by values
-  retrieved from the audio file's metadata.
-  
+  marks. The words album, artist, composer, title, track and disc will be replaced
+  by values retrieved from the audio file's metadata.
+
   For example, --format="artist - album [track] title" will rename music files
   with the name format:
   Sample Artist - Sample Album [1] Sample Title
-  
-  The following characters are of special importance to the operating system 
+
+  The following characters are of special importance to the operating system
   and cannot be used in the file name:
   \    /    :    *    ?    "    <    >    |
 
   (=) is replaced by the directory path separator, so to move files into
   artist and album subdirectories, the following format can be used:
   "artist(=)album(=)track - title"
-  
+
   If no format is provided, the default format is the same as used in the above
   example.
 
 Examples:
-  projectmusic.py                       Renames music files in the current 
+  projectmusic.py                       Renames music files in the current
                                         directory
   projectmusic.py -d /music/path/       Renames music files in /music/path/
   projectmusic.py -f "title -- artist"  Renames music files in the current
@@ -78,8 +82,25 @@ import getopt
 import mutagen.easyid3
 import mutagen.oggvorbis
 
+# Monkey patching of easyID3 to add support for "sets" (i.e. CD number)
+new_valid_keys = {
+        "album": "TALB",
+        "composer": "TCOM",
+        "genre": "TCON",
+        "date": "TDRC",
+        "lyricist": "TEXT",
+        "title": "TIT2",
+        "version": "TIT3",
+        "artist": "TPE1",
+        "tracknumber": "TRCK",
+        "discnumber": "TPOS",
+        }
+"""Valid keys for EasyID3 instances."""
+
+mutagen.easyid3.EasyID3.valid_keys = new_valid_keys
+
 ### Exceptions ###
-    
+
 class FormatError(Exception):
     """
     Exception raised due to improper formatting
@@ -96,8 +117,8 @@ class DirectoryError(Exception):
 
 def scanDirectory(directory, fileExtList, recursive=False):
     """
-    Generate a list of files with the specified extension(s) in the specified 
-    directory (and its subdirectories, if the recursive option is enabled) 
+    Generate a list of files with the specified extension(s) in the specified
+    directory (and its subdirectories, if the recursive option is enabled)
     """
     fileList = []
 
@@ -116,10 +137,12 @@ def scanDirectory(directory, fileExtList, recursive=False):
 
 class AudioFile:
     """
-    A generic audio file 
+    A generic audio file
     """
-    def __init__(self, fileName):
+    def __init__(self, fileName, padding):
         self.fileName = fileName
+        self.padding = padding
+
         self.fileExt = os.path.splitext(fileName)[1].lower()
         self.filePath = os.path.split(fileName)[0] + os.path.sep
 
@@ -130,21 +153,28 @@ class AudioFile:
 
     def generate(self):
         def lookup(key, default):
-            return self.data[key][0] if ( self.data.has_key(key) and 
+            return self.data[key][0] if ( self.data.has_key(key) and
                                           self.data[key][0] ) else default
 
         self.artist = lookup("artist", "No Artist")
+        self.composer = lookup("composer", "No Composer")
         self.album = lookup("album", "No Album")
         self.title = lookup("title", "No Title")
         self.track = lookup("tracknumber", "0")
+        self.disc = lookup("discnumber", "0")
 
         if self.track != "0":
-            self.track = self.track.split("/")[0].lstrip("0") 
+            self.track = self.track.split("/")[0].lstrip("0")
+            if self.padding > 0:
+                pad_format = "{0:0>%s}" % self.padding
+                self.track = pad_format.format(int(self.track))
+        if self.disc != "0":
+            self.disc = self.disc.split("/")[0].lstrip("0")
 
-        # In regards to track numbers, self.data["tracknumber"] returns numbers 
-        # in several different formats: 1, 1/10, 01, or 01/10. Wanting a 
-        # consistent format, the returned string is split at the "/" and leading
-        # zeros are stripped.
+        # In regards to track & disc numbers, self.data["tracknumber"] returns
+        # numbers in several different formats: 1, 1/10, 01, or 01/10. Wanting a
+        # consistent format, the returned string is split at the "/".
+        # To make sorting simpler, leading zeros are added to the track number
 
     def parse_mp3(self):
         return mutagen.easyid3.EasyID3(self.fileName)
@@ -155,24 +185,24 @@ class AudioFile:
     def rename(self, newFileName, flatten=False):
         def uniqueName(newFileName, count=0):
             """
-            Returns a unique name if a file already exists with the supplied 
+            Returns a unique name if a file already exists with the supplied
             name
             """
             c = "_(%s)" % str(count) if count else ""
             prefix = directory + os.path.sep if flatten else self.filePath
             testFileName = prefix + newFileName + c + self.fileExt
-    
+
             if os.path.isfile(testFileName):
                 count += 1
                 return uniqueName(newFileName, count)
-    
+
             else:
                 return testFileName
-        
+
         os.renames(self.fileName, uniqueName(newFileName))
-    
+
         # Note: this function is quite simple at the moment; it does not support
-        # multiple file extensions, such as "sample.txt.backup", which would 
+        # multiple file extensions, such as "sample.txt.backup", which would
         # only retain the ".backup" file extension.
 
     def cleanFileName(self, format):
@@ -180,14 +210,16 @@ class AudioFile:
         Generate a clean file name based on metadata
         """
         rawFileName = format % {"artist": self.artist,
-                                "album": self.album,
-                                "title": self.title,
-                                "track": self.track}
+                "composer": self.composer,
+                "album": self.album,
+                "title": self.title,
+                "disc": self.disc,
+                "track": self.track}
 
         rawFileName.encode("ascii", "replace")
         # encode is used to override the default encode error-handing mode;
         # which is to raise a UnicodeDecodeError
-    
+
         cleanFileName = re.sub(restrictedCharPattern, "+", rawFileName)
         # remove restricted filename characters (\, /, :, *, ?, ", <, >, |) from
         # the supplied string
@@ -200,50 +232,64 @@ def main(argv):
     global directory
     directory = os.getcwd()
     format = "%(artist)s - %(album)s [%(track)s] %(title)s"
+    padding = 0
     flatten = False
     recursive = False
+    noconfirm = False
     test = False
- 
+
     def verifyFormat(format):
         """
         Verify the supplied filename format
-        """    
+        """
         if re.search(restrictedCharPattern, format):
             raise FormatError, "supplied format contains restricted characters"
 
         if not re.search(formatPattern, format):
             raise FormatError, "supplied format does not contain any metadata keys"
-            # the supplied format must contain at least one of "artist", 
-            # "album", "title", or "track", or all files will be named 
+        # the supplied format must contain at least one of "artist", "composer",
+            # "album", "title", "disc" or "track", or all files will be named
             # identically
-        
+
         format = format.replace("artist", "%(artist)s")
+        format = format.replace("composer", "%(composer)s")
         format = format.replace("album", "%(album)s")
         format = format.replace("title", "%(title)s")
         format = format.replace("track", "%(track)s")
+        format = format.replace("disc", "%(disc)s")
         return format
-        
+
     def verifyDirectory(directory):
         """
         Verify the supplied directory path
         """
         if os.path.isdir(directory):
             return os.path.abspath(directory)
-        
         else:
-            raise DirectoryError, "supplied directory cannot be found"    
+            raise DirectoryError, "supplied directory cannot be found"
+
+    def verifyPadding(padding):
+        """
+        Verify the supplied padding number
+        """
+        if padding.isdigit():
+                return padding
+        else:
+                raise FormatError, "padding should be an integer > 0"
 
     def usage():
         print __doc__
 
     try:
-        opts, args = getopt.getopt(argv, "d:f:hlrt", ["directory=", 
-                                                      "format=", 
-                                                      "help", 
-                                                      "flatten", 
-                                                      "recursive", 
-                                                      "test"])
-    
+        opts, args = getopt.getopt(argv, "d:f:p:hlrnt", ["directory=",
+                                                         "format=",
+                                                         "padding=",
+                                                         "help",
+                                                         "flatten",
+                                                         "recursive",
+                                                         "noconfirm",
+                                                         "test"])
+
     except getopt.error, error:
         usage()
         print "\n***Error: %s***" % error
@@ -253,19 +299,27 @@ def main(argv):
         if opt in ("-h", "--help"):
             usage()
             sys.exit()
-        
+
         elif opt in ("-f", "--format"):
             try:
                 format = verifyFormat(arg)
-            
+
             except FormatError, error:
                 print "\n***Error: %s***" % error
                 sys.exit(2)
-        
+
+        elif opt in ("-p", "--padding"):
+            try:
+                padding = verifyPadding(arg)
+
+            except FormatError, error:
+                print "\n***Error: %s***" % error
+                sys.exit(2)
+
         elif opt in ("-d", "--directory"):
             try:
                 directory = verifyDirectory(arg)
-            
+
             except DirectoryError, error:
                 print "\n***Error: %s***" % error
                 sys.exit(3)
@@ -275,57 +329,62 @@ def main(argv):
 
         elif opt in ("-r", "--recursive"):
             recursive = True
-                
+
+        elif opt in ("-n", "--noconfirm"):
+            noconfirm = True
+
         elif opt in ("-t", "--test"):
             test = True
 
-    work(directory, format, flatten, recursive, test)
+    work(directory, format, padding, flatten, recursive, test, noconfirm)
 
-def safety(message):
+def safety(message, noconfirm = False):
     print "\n***Attention: %s***" % message
-    safety = raw_input("Enter 'ok' to continue (any other response will abort): ")
-    
-    if safety.lower().strip() != "ok":
-        print "\n***Attention: aborting***"
-        sys.exit()
 
-def work(directory, format, flatten, recursive, test):
+    if not noconfirm:
+        safety = raw_input("Enter 'ok' to continue (any other response will abort): ")
+
+        if safety.lower().strip() != "ok":
+            print "\n***Attention: aborting***"
+            sys.exit()
+
+def work(directory, format, padding, flatten, recursive, test, noconfirm):
     fileList = scanDirectory(directory, [".mp3", ".ogg"], recursive)
 
     try:
         if test:
-            safety("testing mode; nothing will be renamed")
-    
+            safety("testing mode; nothing will be renamed", noconfirm)
+
             print "\n***Attention: starting***"
-    
-            for f in fileList:              
-                current = AudioFile(f)
+
+            for f in fileList:
+                current = AudioFile(f, padding)
                 print current.cleanFileName(format)
-                    
+
         else:
             count = 0
             total = len(fileList)
-            safety("all audio files in %s will be renamed" % directory)
+            safety("all audio files in %s will be renamed" % directory, noconfirm)
 
             print "\n***Attention: starting***"
             start = time.time()
-                
+
             for f in fileList:
                 count += 1
-                current = AudioFile(f)
+                current = AudioFile(f, padding)
                 current.rename(current.cleanFileName(format), flatten)
                 message = "Renamed %d of %d" % (count, total)
                 sys.stdout.write("\r" + message)
 
-            print "\n%d files renamed in %f seconds" % (len(fileList), 
+            print "\n%d files renamed in %f seconds" % (len(fileList),
                                                         time.time() - start)
-   
+
     except StandardError:
-        print "\n***Error: %s***" % f 
+        print "\n***Error: %s***" % f
         raise
-        
+
 if __name__ == "__main__":
     restrictedCharPattern = re.compile('[\\\\/:\*\?"<>\|]')
-    formatPattern = re.compile('artist|album|title|track')
+    formatPattern = re.compile('artist|composer|album|title|track|disc')
 
     main(sys.argv[1:])
